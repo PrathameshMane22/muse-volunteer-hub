@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
   Users, Calendar, CheckSquare, ShieldCheck, 
-  LogOut, AlertCircle, Plus, X 
+  LogOut, AlertCircle, Plus, X, KeyRound, CheckCircle2 
 } from 'lucide-react';
 
 export default function Home() {
@@ -20,6 +20,13 @@ export default function Home() {
   const [volunteers, setVolunteers] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
+
+  // Password Change State
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordStatus, setPasswordStatus] = useState<{ type: 'error' | 'success' | ''; message: string }>({ type: '', message: '' });
+  const [passwordLoading, setPasswordLoading] = useState(false);
 
   // Modals
   const [showEventModal, setShowEventModal] = useState(false);
@@ -102,6 +109,37 @@ export default function Home() {
     await supabase.auth.signOut();
     setSession(null);
     setProfile(null);
+  }
+
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPasswordStatus({ type: '', message: '' });
+
+    if (newPassword.length < 6) {
+      setPasswordStatus({ type: 'error', message: 'Password must be at least 6 characters long.' });
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordStatus({ type: 'error', message: 'Passwords do not match.' });
+      return;
+    }
+
+    setPasswordLoading(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+
+    if (error) {
+      setPasswordStatus({ type: 'error', message: error.message });
+    } else {
+      setPasswordStatus({ type: 'success', message: 'Password updated successfully! Use your new password next time.' });
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => {
+        setShowPasswordModal(false);
+        setPasswordStatus({ type: '', message: '' });
+      }, 2000);
+    }
+    setPasswordLoading(false);
   }
 
   async function handleCreateEvent(e: React.FormEvent) {
@@ -224,6 +262,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
+      {/* Sidebar */}
       <aside className="w-full md:w-64 bg-slate-900 text-slate-200 flex flex-col">
         <div className="p-5 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center space-x-2">
@@ -272,17 +311,32 @@ export default function Home() {
           </button>
         </nav>
 
+        {/* User bar with Password & Logout */}
         <div className="p-4 border-t border-slate-800 flex items-center justify-between">
           <div className="truncate pr-2">
             <p className="text-xs font-semibold text-white truncate">{profile?.name || session.user.email}</p>
             <p className="text-[10px] text-slate-400 truncate">{session.user.email}</p>
           </div>
-          <button onClick={handleLogout} title="Logout" className="text-slate-400 hover:text-red-400 p-1">
-            <LogOut className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={() => setShowPasswordModal(true)} 
+              title="Change Password" 
+              className="text-slate-400 hover:text-emerald-400 p-1.5 rounded transition hover:bg-slate-800"
+            >
+              <KeyRound className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={handleLogout} 
+              title="Logout" 
+              className="text-slate-400 hover:text-red-400 p-1.5 rounded transition hover:bg-slate-800"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </aside>
 
+      {/* Main Content Area */}
       <main className="flex-1 p-6 md:p-8 overflow-y-auto">
         {activeTab === 'overview' && (
           <div className="space-y-6">
@@ -447,6 +501,66 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      {/* Modal: Change Password */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-xl space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-emerald-600" />
+                <h3 className="font-bold text-slate-900">Change Password</h3>
+              </div>
+              <button onClick={() => { setShowPasswordModal(false); setPasswordStatus({ type: '', message: '' }); }}>
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+
+            {passwordStatus.message && (
+              <div className={`p-3 text-xs rounded-lg flex items-center gap-2 border ${
+                passwordStatus.type === 'error' 
+                  ? 'bg-red-50 text-red-700 border-red-200' 
+                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              }`}>
+                {passwordStatus.type === 'error' ? <AlertCircle className="w-4 h-4 shrink-0" /> : <CheckCircle2 className="w-4 h-4 shrink-0" />}
+                <span>{passwordStatus.message}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleChangePassword} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">New Password</label>
+                <input
+                  required
+                  type="password"
+                  placeholder="At least 6 characters"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Confirm New Password</label>
+                <input
+                  required
+                  type="password"
+                  placeholder="Repeat new password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={passwordLoading}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-semibold transition"
+              >
+                {passwordLoading ? 'Updating...' : 'Update Password'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Add Event */}
       {showEventModal && (
