@@ -3,8 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
-  Users, Calendar, CheckSquare, 
-  ShieldCheck, LogOut, AlertCircle
+  Users, Calendar, CheckSquare, ShieldCheck, 
+  LogOut, AlertCircle, Plus, X 
 } from 'lucide-react';
 
 export default function Home() {
@@ -16,10 +16,39 @@ export default function Home() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'volunteers' | 'events' | 'tasks'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'volunteers' | 'events' | 'tasks'>('events');
   const [volunteers, setVolunteers] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
+
+  // Modals
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [newEvent, setNewEvent] = useState({
+    title: '',
+    category: 'Field Drive',
+    date: '',
+    start_time: '10:00',
+    end_time: '13:00',
+    mode: 'offline',
+    venue_or_link: '',
+    description: ''
+  });
+
+  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [newTask, setNewTask] = useState({
+    title: '',
+    description: '',
+    assigned_to: '',
+    priority: 'Medium',
+    due_date: ''
+  });
+
+  const [showVolModal, setShowVolModal] = useState(false);
+  const [newVol, setNewVol] = useState({
+    name: '',
+    email: '',
+    role: 'volunteer'
+  });
 
   useEffect(() => {
     async function loadUser() {
@@ -75,6 +104,60 @@ export default function Home() {
     setProfile(null);
   }
 
+  async function handleCreateEvent(e: React.FormEvent) {
+    e.preventDefault();
+    const { error } = await supabase.from('events').insert([newEvent]);
+    if (!error) {
+      setShowEventModal(false);
+      setNewEvent({
+        title: '',
+        category: 'Field Drive',
+        date: '',
+        start_time: '10:00',
+        end_time: '13:00',
+        mode: 'offline',
+        venue_or_link: '',
+        description: ''
+      });
+      fetchDashboardData();
+    }
+  }
+
+  async function handleCreateTask(e: React.FormEvent) {
+    e.preventDefault();
+    const payload = {
+      ...newTask,
+      assigned_to: newTask.assigned_to || (session?.user?.id ?? null)
+    };
+    const { error } = await supabase.from('tasks').insert([payload]);
+    if (!error) {
+      setShowTaskModal(false);
+      setNewTask({
+        title: '',
+        description: '',
+        assigned_to: '',
+        priority: 'Medium',
+        due_date: ''
+      });
+      fetchDashboardData();
+    }
+  }
+
+  async function handleCreateVol(e: React.FormEvent) {
+    e.preventDefault();
+    const { error } = await supabase.from('profiles').insert([{
+      name: newVol.name,
+      email: newVol.email,
+      role: newVol.role,
+      status: 'active'
+    }]);
+    if (!error) {
+      setShowVolModal(false);
+      setNewVol({ name: '', email: '', role: 'volunteer' });
+      fetchDashboardData();
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-50">
@@ -88,9 +171,7 @@ export default function Home() {
       <main className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
           <div className="flex items-center space-x-3 mb-6">
-            <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white font-bold text-xl">
-              M
-            </div>
+            <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white font-bold text-xl">M</div>
             <div>
               <h1 className="text-xl font-bold text-slate-900">MUSE Volunteer Hub</h1>
               <p className="text-xs text-slate-500">MUSE Foundation Operations Portal</p>
@@ -138,7 +219,8 @@ export default function Home() {
     );
   }
 
-  const isAdmin = profile?.role === 'super_admin' || profile?.role === 'admin';
+  const roleClean = String(profile?.role || '').toLowerCase();
+  const isAdmin = roleClean === 'super_admin' || roleClean === 'admin';
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
@@ -148,8 +230,8 @@ export default function Home() {
             <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center font-bold text-white">M</div>
             <span className="font-bold text-white text-base">MUSE Hub</span>
           </div>
-          <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono uppercase">
-            {profile?.role || 'User'}
+          <span className="text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 px-2 py-0.5 rounded font-mono uppercase">
+            {profile?.role || 'volunteer'}
           </span>
         </div>
 
@@ -228,7 +310,17 @@ export default function Home() {
 
         {activeTab === 'volunteers' && (
           <div className="space-y-4">
-            <h2 className="text-xl font-bold text-slate-900">Volunteer Directory</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-slate-900">Volunteer Directory</h2>
+              {isAdmin && (
+                <button
+                  onClick={() => setShowVolModal(true)}
+                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-sm font-medium shadow-sm transition"
+                >
+                  <Plus className="w-4 h-4" /> Add Volunteer
+                </button>
+              )}
+            </div>
             <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
               <table className="w-full text-left text-sm text-slate-600">
                 <thead className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase">
@@ -260,19 +352,44 @@ export default function Home() {
 
         {activeTab === 'events' && (
           <div className="space-y-4">
-            <h2 className="text-xl font-bold text-slate-900">Events & Field Drives</h2>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">Events & Field Drives</h2>
+                <p className="text-xs text-slate-500">Schedule drives and track upcoming organization events</p>
+              </div>
+              {isAdmin && (
+                <button
+                  onClick={() => setShowEventModal(true)}
+                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm transition"
+                >
+                  <Plus className="w-4 h-4" /> Add Event
+                </button>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {events.length === 0 ? (
-                <p className="text-sm text-slate-500">No events scheduled yet.</p>
+                <div className="col-span-2 p-12 text-center bg-white rounded-xl border border-slate-200 text-slate-400 space-y-3">
+                  <Calendar className="w-8 h-8 mx-auto text-slate-300" />
+                  <p className="font-medium text-slate-600">No events scheduled yet.</p>
+                  {isAdmin && (
+                    <button
+                      onClick={() => setShowEventModal(true)}
+                      className="inline-flex items-center gap-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-1.5 rounded-lg text-xs font-semibold"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Create the First Event
+                    </button>
+                  )}
+                </div>
               ) : (
                 events.map((ev) => (
                   <div key={ev.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-2">
                     <span className="text-xs font-bold text-emerald-600 uppercase">{ev.category}</span>
                     <h3 className="font-bold text-slate-900">{ev.title}</h3>
                     <p className="text-xs text-slate-500">{ev.description}</p>
-                    <div className="text-xs text-slate-600 flex items-center gap-3 pt-2">
+                    <div className="text-xs text-slate-600 flex items-center justify-between pt-2 border-t border-slate-100 mt-2">
                       <span>Date: {ev.date}</span>
-                      <span>Mode: {ev.mode}</span>
+                      <span>Venue: {ev.venue_or_link}</span>
                     </div>
                   </div>
                 ))
@@ -283,18 +400,44 @@ export default function Home() {
 
         {activeTab === 'tasks' && (
           <div className="space-y-4">
-            <h2 className="text-xl font-bold text-slate-900">Tasks</h2>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">Tasks & Deliverables</h2>
+                <p className="text-xs text-slate-500">Track assignments across members</p>
+              </div>
+              {isAdmin && (
+                <button
+                  onClick={() => setShowTaskModal(true)}
+                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm transition"
+                >
+                  <Plus className="w-4 h-4" /> Assign Task
+                </button>
+              )}
+            </div>
+
             <div className="space-y-2">
               {tasks.length === 0 ? (
-                <p className="text-sm text-slate-500">No assigned tasks yet.</p>
+                <div className="p-12 text-center bg-white rounded-xl border border-slate-200 text-slate-400 space-y-3">
+                  <CheckSquare className="w-8 h-8 mx-auto text-slate-300" />
+                  <p className="font-medium text-slate-600">No tasks assigned yet.</p>
+                  {isAdmin && (
+                    <button
+                      onClick={() => setShowTaskModal(true)}
+                      className="inline-flex items-center gap-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-1.5 rounded-lg text-xs font-semibold"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Assign First Task
+                    </button>
+                  )}
+                </div>
               ) : (
                 tasks.map((task) => (
                   <div key={task.id} className="bg-white p-4 rounded-xl border border-slate-200 flex justify-between items-center shadow-sm">
                     <div>
                       <h4 className="font-bold text-slate-900 text-sm">{task.title}</h4>
                       <p className="text-xs text-slate-500">{task.description}</p>
+                      <span className="text-[10px] text-slate-400">Due: {task.due_date} | Priority: {task.priority}</span>
                     </div>
-                    <span className="text-xs px-2 py-1 bg-slate-100 rounded text-slate-700 font-medium">
+                    <span className="text-xs px-2.5 py-1 bg-slate-100 rounded-full text-slate-700 font-medium">
                       {task.status}
                     </span>
                   </div>
@@ -304,6 +447,209 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      {/* Modal: Add Event */}
+      {showEventModal && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b">
+              <h3 className="font-bold text-slate-900">Create Field Drive / Event</h3>
+              <button onClick={() => setShowEventModal(false)}><X className="w-5 h-5 text-slate-400" /></button>
+            </div>
+            <form onSubmit={handleCreateEvent} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Event Title</label>
+                <input
+                  required
+                  type="text"
+                  placeholder="e.g. Mangrove Clean-up Drive"
+                  value={newEvent.title}
+                  onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 uppercase">Category</label>
+                  <input
+                    type="text"
+                    value={newEvent.category}
+                    onChange={(e) => setNewEvent({ ...newEvent, category: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 uppercase">Date</label>
+                  <input
+                    required
+                    type="date"
+                    value={newEvent.date}
+                    onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Venue or Online Link</label>
+                <input
+                  required
+                  type="text"
+                  placeholder="e.g. Bhuigaon Beach or Google Meet link"
+                  value={newEvent.venue_or_link}
+                  onChange={(e) => setNewEvent({ ...newEvent, venue_or_link: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Description & Instructions</label>
+                <textarea
+                  rows={2}
+                  value={newEvent.description}
+                  onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <button
+                type="submit"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-lg text-sm font-semibold transition"
+              >
+                Publish Event
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Assign Task */}
+      {showTaskModal && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b">
+              <h3 className="font-bold text-slate-900">Assign New Task</h3>
+              <button onClick={() => setShowTaskModal(false)}><X className="w-5 h-5 text-slate-400" /></button>
+            </div>
+            <form onSubmit={handleCreateTask} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Task Title</label>
+                <input
+                  required
+                  type="text"
+                  placeholder="e.g. Design Awareness Posters"
+                  value={newTask.title}
+                  onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Assign To Volunteer</label>
+                <select
+                  value={newTask.assigned_to}
+                  onChange={(e) => setNewTask({ ...newTask, assigned_to: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">Assign to Myself</option>
+                  {volunteers.map((v) => (
+                    <option key={v.id} value={v.id}>{v.name || v.email}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 uppercase">Priority</label>
+                  <select
+                    value={newTask.priority}
+                    onChange={(e) => setNewTask({ ...newTask, priority: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="Low">Low</option>
+                    <option value="Medium">Medium</option>
+                    <option value="High">High</option>
+                    <option value="Urgent">Urgent</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 uppercase">Due Date</label>
+                  <input
+                    required
+                    type="date"
+                    value={newTask.due_date}
+                    onChange={(e) => setNewTask({ ...newTask, due_date: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Task Instructions</label>
+                <textarea
+                  rows={2}
+                  value={newTask.description}
+                  onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <button
+                type="submit"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-lg text-sm font-semibold transition"
+              >
+                Assign Task
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Add Volunteer */}
+      {showVolModal && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b">
+              <h3 className="font-bold text-slate-900">Add Volunteer to Roster</h3>
+              <button onClick={() => setShowVolModal(false)}><X className="w-5 h-5 text-slate-400" /></button>
+            </div>
+            <form onSubmit={handleCreateVol} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Full Name</label>
+                <input
+                  required
+                  type="text"
+                  placeholder="e.g. Aarav Sharma"
+                  value={newVol.name}
+                  onChange={(e) => setNewVol({ ...newVol, name: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Email Address</label>
+                <input
+                  required
+                  type="email"
+                  placeholder="volunteer@example.org"
+                  value={newVol.email}
+                  onChange={(e) => setNewVol({ ...newVol, email: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Role</label>
+                <select
+                  value={newVol.role}
+                  onChange={(e) => setNewVol({ ...newVol, role: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="volunteer">Volunteer</option>
+                  <option value="admin">Domain Lead / Admin</option>
+                </select>
+              </div>
+              <button
+                type="submit"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-lg text-sm font-semibold transition"
+              >
+                Save Member
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
