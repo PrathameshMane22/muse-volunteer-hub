@@ -20,24 +20,20 @@ export default function Home() {
 
   const [activeTab, setActiveTab] = useState<'overview' | 'volunteers' | 'events' | 'meetings' | 'tasks' | 'attendance'>('volunteers');
   
-  // Datasets
   const [volunteers, setVolunteers] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [meetings, setMeetings] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [attendance, setAttendance] = useState<any[]>([]);
 
-  // Action states
   const [actionLoading, setActionLoading] = useState(false);
   const [modalError, setModalError] = useState('');
 
-  // Modals
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordStatus, setPasswordStatus] = useState<{ type: 'error' | 'success' | ''; message: string }>({ type: '', message: '' });
 
-  // Add Volunteer Form State (With Initial Password)
   const [showVolModal, setShowVolModal] = useState(false);
   const [newVol, setNewVol] = useState({ name: '', email: '', password: '', role: 'volunteer', status: 'active' });
 
@@ -50,16 +46,14 @@ export default function Home() {
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [newTask, setNewTask] = useState({ title: '', description: '', assigned_to: '', priority: 'Medium', due_date: '' });
 
-  // Attendance modal
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
   const [selectedSessionKey, setSelectedSessionKey] = useState('');
   const [attendanceRecords, setAttendanceRecords] = useState<{ [volunteerId: string]: string }>({});
 
-  // Candidate task update
   const [candidateTaskModal, setCandidateTaskModal] = useState<any>(null);
   const [candidateUpdate, setCandidateUpdate] = useState({ status: 'pending', candidate_comment: '', extension_requested: false, requested_due_date: '' });
 
- useEffect(() => {
+  useEffect(() => {
     async function loadUser() {
       setLoading(true);
       const { data: { session } } = await supabase.auth.getSession();
@@ -72,7 +66,6 @@ export default function Home() {
           .eq('id', session.user.id)
           .single();
 
-        // If user was deleted or set to inactive, kick them out immediately
         if (error || !prof || prof.status === 'inactive') {
           await supabase.auth.signOut();
           setSession(null);
@@ -91,7 +84,7 @@ export default function Home() {
   }, []);
 
   async function fetchDashboardData() {
-    const { data: volData } = await supabase.from('profiles').select('*');
+    const { data: volData } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
     if (volData) setVolunteers(volData);
 
     const { data: evData } = await supabase.from('events').select('*').order('date', { ascending: true });
@@ -107,7 +100,7 @@ export default function Home() {
     if (attData) setAttendance(attData);
   }
 
-async function handleLogin(e: React.FormEvent) {
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setAuthError('');
     setLoading(true);
@@ -118,7 +111,6 @@ async function handleLogin(e: React.FormEvent) {
       return;
     }
 
-    // Verify profile status upon signing in
     const { data: prof, error: profError } = await supabase
       .from('profiles')
       .select('*')
@@ -175,7 +167,21 @@ async function handleLogin(e: React.FormEvent) {
     else alert('Error deleting: ' + error.message);
   }
 
-  // Create Volunteer with Password using an isolated instance
+  // Instant Role Change from the Directory Table
+  async function handleUpdateRole(volId: string, updatedRole: string) {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ role: updatedRole })
+      .eq('id', volId);
+
+    if (error) {
+      alert('Failed to update role: ' + error.message);
+    } else {
+      fetchDashboardData();
+    }
+  }
+
+  // Create Volunteer with explicitly saved role
   async function handleCreateVol(e: React.FormEvent) {
     e.preventDefault();
     setModalError('');
@@ -408,7 +414,9 @@ async function handleLogin(e: React.FormEvent) {
   }
 
   const roleClean = String(profile?.role || '').toLowerCase();
-  const isAdmin = roleClean === 'super_admin' || roleClean === 'admin';
+  const isSuperAdmin = roleClean === 'super_admin';
+  const isDomainLead = roleClean === 'admin';
+  const canManageOperations = isSuperAdmin || isDomainLead;
 
   const currentMonth = new Date().toISOString().slice(0, 7);
   const volunteerStats = volunteers.map((vol) => {
@@ -456,16 +464,16 @@ async function handleLogin(e: React.FormEvent) {
           >
             <ShieldCheck className="w-4 h-4" /> Overview
           </button>
-          {isAdmin && (
-            <button
-              onClick={() => setActiveTab('volunteers')}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
-                activeTab === 'volunteers' ? 'bg-emerald-600 text-white' : 'hover:bg-slate-800 text-slate-400'
-              }`}
-            >
-              <Users className="w-4 h-4" /> Volunteers ({volunteers.length})
-            </button>
-          )}
+          
+          <button
+            onClick={() => setActiveTab('volunteers')}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
+              activeTab === 'volunteers' ? 'bg-emerald-600 text-white' : 'hover:bg-slate-800 text-slate-400'
+            }`}
+          >
+            <Users className="w-4 h-4" /> Volunteers ({volunteers.length})
+          </button>
+          
           <button
             onClick={() => setActiveTab('events')}
             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
@@ -560,9 +568,9 @@ async function handleLogin(e: React.FormEvent) {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-bold text-slate-900">Volunteer Directory</h2>
-                <p className="text-xs text-slate-500">Manage team members, roles, and roster status</p>
+                <p className="text-xs text-slate-500">Manage team members, assign operational roles, and check roster status</p>
               </div>
-              {isAdmin && (
+              {isSuperAdmin && (
                 <button
                   onClick={() => { setModalError(''); setShowVolModal(true); }}
                   className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-sm font-medium shadow-sm transition"
@@ -579,7 +587,7 @@ async function handleLogin(e: React.FormEvent) {
                     <th className="px-4 py-3">Email</th>
                     <th className="px-4 py-3">Role</th>
                     <th className="px-4 py-3">Status</th>
-                    {isAdmin && <th className="px-4 py-3 text-right">Actions</th>}
+                    {isSuperAdmin && <th className="px-4 py-3 text-right">Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -587,7 +595,26 @@ async function handleLogin(e: React.FormEvent) {
                     <tr key={vol.id} className="hover:bg-slate-50">
                       <td className="px-4 py-3 font-medium text-slate-900">{vol.name || '—'}</td>
                       <td className="px-4 py-3">{vol.email}</td>
-                      <td className="px-4 py-3 capitalize">{vol.role}</td>
+                      <td className="px-4 py-3">
+                        {isSuperAdmin && vol.role !== 'super_admin' ? (
+                          <select
+                            value={vol.role}
+                            onChange={(e) => handleUpdateRole(vol.id, e.target.value)}
+                            className="text-xs border rounded-lg px-2.5 py-1 bg-white font-medium text-slate-800 outline-none focus:ring-1 focus:ring-emerald-500 shadow-sm"
+                          >
+                            <option value="volunteer">Volunteer</option>
+                            <option value="admin">Domain Lead (Admin)</option>
+                          </select>
+                        ) : (
+                          <span className={`inline-block px-2.5 py-0.5 text-xs rounded-full font-semibold ${
+                            vol.role === 'super_admin' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
+                            vol.role === 'admin' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' :
+                            'bg-slate-100 text-slate-700'
+                          }`}>
+                            {vol.role === 'super_admin' ? 'Super Admin' : vol.role === 'admin' ? 'Domain Lead' : 'Volunteer'}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3">
                         <span className={`inline-block px-2.5 py-0.5 text-xs rounded-full font-medium ${
                           vol.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'
@@ -595,15 +622,17 @@ async function handleLogin(e: React.FormEvent) {
                           {vol.status || 'active'}
                         </span>
                       </td>
-                      {isAdmin && (
+                      {isSuperAdmin && (
                         <td className="px-4 py-3 text-right">
-                          <button
-                            onClick={() => handleDelete('profiles', vol.id)}
-                            title="Remove Volunteer"
-                            className="text-slate-400 hover:text-red-600 p-1 rounded"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {vol.role !== 'super_admin' && (
+                            <button
+                              onClick={() => handleDelete('profiles', vol.id)}
+                              title="Remove Volunteer"
+                              className="text-slate-400 hover:text-red-600 p-1 rounded"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </td>
                       )}
                     </tr>
@@ -622,7 +651,7 @@ async function handleLogin(e: React.FormEvent) {
                 <h2 className="text-xl font-bold text-slate-900">Events & Field Drives</h2>
                 <p className="text-xs text-slate-500">Upcoming community clean-ups, workshops, and drives</p>
               </div>
-              {isAdmin && (
+              {canManageOperations && (
                 <button
                   onClick={() => { setModalError(''); setShowEventModal(true); }}
                   className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-sm font-medium shadow-sm transition"
@@ -639,7 +668,7 @@ async function handleLogin(e: React.FormEvent) {
               ) : (
                 events.map((ev) => (
                   <div key={ev.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-2 relative">
-                    {isAdmin && (
+                    {canManageOperations && (
                       <button
                         onClick={() => handleDelete('events', ev.id)}
                         className="absolute top-4 right-4 text-slate-400 hover:text-red-600 p-1"
@@ -670,7 +699,7 @@ async function handleLogin(e: React.FormEvent) {
                 <h2 className="text-xl font-bold text-slate-900">Team Meetings & Syncs</h2>
                 <p className="text-xs text-slate-500">Internal coordination calls and operational discussions</p>
               </div>
-              {isAdmin && (
+              {canManageOperations && (
                 <button
                   onClick={() => { setModalError(''); setShowMeetingModal(true); }}
                   className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-sm font-medium shadow-sm transition"
@@ -687,7 +716,7 @@ async function handleLogin(e: React.FormEvent) {
               ) : (
                 meetings.map((m) => (
                   <div key={m.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-2 relative">
-                    {isAdmin && (
+                    {canManageOperations && (
                       <button
                         onClick={() => handleDelete('meetings', m.id)}
                         className="absolute top-4 right-4 text-slate-400 hover:text-red-600 p-1"
@@ -721,7 +750,7 @@ async function handleLogin(e: React.FormEvent) {
                 <h2 className="text-xl font-bold text-slate-900">Tasks & Deliverables</h2>
                 <p className="text-xs text-slate-500">Track assignment progress, updates, and extension requests</p>
               </div>
-              {isAdmin && (
+              {canManageOperations && (
                 <button
                   onClick={() => { setModalError(''); setShowTaskModal(true); }}
                   className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-sm font-medium shadow-sm transition"
@@ -764,7 +793,7 @@ async function handleLogin(e: React.FormEvent) {
                         </div>
 
                         <div className="flex items-center gap-2">
-                          {(isAssignedToMe || isAdmin) && (
+                          {(isAssignedToMe || canManageOperations) && (
                             <button
                               onClick={() => {
                                 setCandidateTaskModal(task);
@@ -780,7 +809,7 @@ async function handleLogin(e: React.FormEvent) {
                               Update Status / Notes
                             </button>
                           )}
-                          {isAdmin && (
+                          {canManageOperations && (
                             <button
                               onClick={() => handleDelete('tasks', task.id)}
                               className="text-slate-400 hover:text-red-600 p-1.5 rounded"
@@ -816,7 +845,7 @@ async function handleLogin(e: React.FormEvent) {
                 <h2 className="text-xl font-bold text-slate-900">Attendance Tracker</h2>
                 <p className="text-xs text-slate-500">Record session attendance and monitor member participation rates</p>
               </div>
-              {isAdmin && (
+              {canManageOperations && (
                 <button
                   onClick={() => {
                     setModalError('');
@@ -834,7 +863,6 @@ async function handleLogin(e: React.FormEvent) {
               )}
             </div>
 
-            {/* Attendance Analytics Table */}
             <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
               <table className="w-full text-left text-sm text-slate-600">
                 <thead className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase">
@@ -878,7 +906,6 @@ async function handleLogin(e: React.FormEvent) {
               </table>
             </div>
 
-            {/* Attendance History Log */}
             <div className="space-y-3">
               <h3 className="font-bold text-slate-900 text-base">Recorded Attendance Logs</h3>
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
@@ -890,7 +917,7 @@ async function handleLogin(e: React.FormEvent) {
                       <th className="px-4 py-3">Date</th>
                       <th className="px-4 py-3">Volunteer</th>
                       <th className="px-4 py-3">Status</th>
-                      {isAdmin && <th className="px-4 py-3 text-right">Action</th>}
+                      {canManageOperations && <th className="px-4 py-3 text-right">Action</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -917,7 +944,7 @@ async function handleLogin(e: React.FormEvent) {
                                 {rec.status}
                               </span>
                             </td>
-                            {isAdmin && (
+                            {canManageOperations && (
                               <td className="px-4 py-3 text-right">
                                 <button
                                   onClick={() => handleDelete('attendance', rec.id)}
@@ -940,7 +967,7 @@ async function handleLogin(e: React.FormEvent) {
         )}
       </main>
 
-      {/* MODAL: Record Attendance from Scheduled Events/Meetings */}
+      {/* MODAL: Attendance */}
       {showAttendanceModal && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4 max-h-[90vh] flex flex-col">
@@ -1007,8 +1034,8 @@ async function handleLogin(e: React.FormEvent) {
         </div>
       )}
 
-      {/* MODAL: Add Volunteer (With Password Input) */}
-      {showVolModal && (
+      {/* MODAL: Add Volunteer */}
+      {showVolModal && isSuperAdmin && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
             <div className="flex justify-between items-center pb-2 border-b">
@@ -1087,8 +1114,8 @@ async function handleLogin(e: React.FormEvent) {
         </div>
       )}
 
-      {/* MODAL: Add Event */}
-      {showEventModal && (
+      {/* MODAL: Event */}
+      {showEventModal && canManageOperations && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4">
             <div className="flex justify-between items-center pb-2 border-b">
@@ -1161,8 +1188,8 @@ async function handleLogin(e: React.FormEvent) {
         </div>
       )}
 
-      {/* MODAL: Add Meeting */}
-      {showMeetingModal && (
+      {/* MODAL: Meeting */}
+      {showMeetingModal && canManageOperations && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4">
             <div className="flex justify-between items-center pb-2 border-b">
@@ -1236,8 +1263,8 @@ async function handleLogin(e: React.FormEvent) {
         </div>
       )}
 
-      {/* MODAL: Assign Task */}
-      {showTaskModal && (
+      {/* MODAL: Task */}
+      {showTaskModal && canManageOperations && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4">
             <div className="flex justify-between items-center pb-2 border-b">
