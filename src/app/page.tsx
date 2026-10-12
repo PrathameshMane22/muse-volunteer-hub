@@ -59,14 +59,29 @@ export default function Home() {
   const [candidateTaskModal, setCandidateTaskModal] = useState<any>(null);
   const [candidateUpdate, setCandidateUpdate] = useState({ status: 'pending', candidate_comment: '', extension_requested: false, requested_due_date: '' });
 
-  useEffect(() => {
+ useEffect(() => {
     async function loadUser() {
       setLoading(true);
       const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
 
       if (session) {
-        const { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+        const { data: prof, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+
+        // If user was deleted or set to inactive, kick them out immediately
+        if (error || !prof || prof.status === 'inactive') {
+          await supabase.auth.signOut();
+          setSession(null);
+          setProfile(null);
+          setAuthError('Your account has been deactivated or removed by an administrator.');
+          setLoading(false);
+          return;
+        }
+
         setProfile(prof);
         fetchDashboardData();
       }
@@ -92,7 +107,7 @@ export default function Home() {
     if (attData) setAttendance(attData);
   }
 
-  async function handleLogin(e: React.FormEvent) {
+async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setAuthError('');
     setLoading(true);
@@ -102,8 +117,22 @@ export default function Home() {
       setLoading(false);
       return;
     }
+
+    // Verify profile status upon signing in
+    const { data: prof, error: profError } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', data.user.id)
+      .single();
+
+    if (profError || !prof || prof.status === 'inactive') {
+      await supabase.auth.signOut();
+      setAuthError('Your account has been deactivated or removed by an administrator.');
+      setLoading(false);
+      return;
+    }
+
     setSession(data.session);
-    const { data: prof } = await supabase.from('profiles').select('*').eq('id', data.user.id).single();
     setProfile(prof);
     fetchDashboardData();
     setLoading(false);
