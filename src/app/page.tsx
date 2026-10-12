@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { 
   Users, Calendar, CheckSquare, ShieldCheck, 
   LogOut, AlertCircle, Plus, X, KeyRound, CheckCircle2,
-  Trash2, Video, Clock, UserCheck, MessageSquare
+  Trash2, Video, UserCheck, MessageSquare
 } from 'lucide-react';
 
 export default function Home() {
@@ -26,15 +26,19 @@ export default function Home() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [attendance, setAttendance] = useState<any[]>([]);
 
-  // State Modals
+  // Action states
   const [actionLoading, setActionLoading] = useState(false);
   const [modalError, setModalError] = useState('');
+
+  // Modals
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordStatus, setPasswordStatus] = useState<{ type: 'error' | 'success' | ''; message: string }>({ type: '', message: '' });
 
-  // Creation Modals
+  const [showVolModal, setShowVolModal] = useState(false);
+  const [newVol, setNewVol] = useState({ name: '', email: '', role: 'volunteer', status: 'active' });
+
   const [showEventModal, setShowEventModal] = useState(false);
   const [newEvent, setNewEvent] = useState({ title: '', category: 'Field Drive', date: '', venue_or_link: '', description: '' });
 
@@ -44,14 +48,12 @@ export default function Home() {
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [newTask, setNewTask] = useState({ title: '', description: '', assigned_to: '', priority: 'Medium', due_date: '' });
 
-  const [showVolModal, setShowVolModal] = useState(false);
-  const [newVol, setNewVol] = useState({ name: '', email: '', role: 'volunteer', status: 'active' });
-
-  // Attendance Form
+  // Event/Meeting linked attendance modal
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
-  const [newAttendance, setNewAttendance] = useState({ volunteer_id: '', event_or_meeting_title: '', session_date: '', status: 'present' });
+  const [selectedSessionKey, setSelectedSessionKey] = useState('');
+  const [attendanceRecords, setAttendanceRecords] = useState<{ [volunteerId: string]: string }>({});
 
-  // Candidate Update Modal
+  // Candidate task update
   const [candidateTaskModal, setCandidateTaskModal] = useState<any>(null);
   const [candidateUpdate, setCandidateUpdate] = useState({ status: 'pending', candidate_comment: '', extension_requested: false, requested_due_date: '' });
 
@@ -84,7 +86,7 @@ export default function Home() {
     const { data: taskData } = await supabase.from('tasks').select('*');
     if (taskData) setTasks(taskData);
 
-    const { data: attData } = await supabase.from('attendance').select('*');
+    const { data: attData } = await supabase.from('attendance').select('*').order('session_date', { ascending: false });
     if (attData) setAttendance(attData);
   }
 
@@ -135,22 +137,32 @@ export default function Home() {
     setActionLoading(false);
   }
 
-  // Deletions
   async function handleDelete(table: string, id: string) {
-    if (!confirm('Are you sure you want to delete this record?')) return;
+    if (!confirm('Are you sure you want to delete this?')) return;
     const { error } = await supabase.from(table).delete().eq('id', id);
     if (!error) fetchDashboardData();
     else alert('Error deleting: ' + error.message);
   }
 
-  // Create Handlers
+  // Create Volunteer with guaranteed UUID
   async function handleCreateVol(e: React.FormEvent) {
     e.preventDefault();
     setModalError('');
     setActionLoading(true);
-    const { error } = await supabase.from('profiles').insert([newVol]);
-    if (error) setModalError(error.message);
-    else {
+
+    const generatedId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined;
+    const insertPayload: any = {
+      name: newVol.name,
+      email: newVol.email,
+      role: newVol.role,
+      status: newVol.status
+    };
+    if (generatedId) insertPayload.id = generatedId;
+
+    const { error } = await supabase.from('profiles').insert([insertPayload]);
+    if (error) {
+      setModalError(error.message);
+    } else {
       setShowVolModal(false);
       setNewVol({ name: '', email: '', role: 'volunteer', status: 'active' });
       fetchDashboardData();
@@ -208,21 +220,49 @@ export default function Home() {
     setActionLoading(false);
   }
 
-  async function handleRecordAttendance(e: React.FormEvent) {
+  // Combined list of scheduled sessions (Events & Meetings)
+  const scheduledSessions = [
+    ...events.map(e => ({ key: `event:${e.id}`, title: e.title, date: e.date, type: 'Event' })),
+    ...meetings.map(m => ({ key: `meeting:${m.id}`, title: m.title, date: m.date, type: 'Meeting' }))
+  ].sort((a, b) => (a.date < b.date ? 1 : -1));
+
+  // Save full-roster attendance for the selected session
+  async function handleSaveSessionAttendance(e: React.FormEvent) {
     e.preventDefault();
-    setModalError('');
+    if (!selectedSessionKey) {
+      setModalError('Please select an event or meeting first.');
+      return;
+    }
+
+    const sessionObj = scheduledSessions.find(s => s.key === selectedSessionKey);
+    if (!sessionObj) return;
+
     setActionLoading(true);
-    const { error } = await supabase.from('attendance').upsert([newAttendance]);
-    if (error) setModalError(error.message);
-    else {
+    setModalError('');
+
+    const recordsToInsert = volunteers.map(vol => ({
+      volunteer_id: vol.id,
+      event_or_meeting_title: sessionObj.title,
+      session_date: sessionObj.date,
+      session_type: sessionObj.type.toLowerCase(),
+      status: attendanceRecords[vol.id] || 'present'
+    }));
+
+    const { error } = await supabase.from('attendance').upsert(recordsToInsert, {
+      onConflict: 'volunteer_id,event_or_meeting_title,session_date'
+    });
+
+    if (error) {
+      setModalError(error.message);
+    } else {
       setShowAttendanceModal(false);
-      setNewAttendance({ volunteer_id: '', event_or_meeting_title: '', session_date: '', status: 'present' });
+      setSelectedSessionKey('');
+      setAttendanceRecords({});
       fetchDashboardData();
     }
     setActionLoading(false);
   }
 
-  // Candidate Progress Update
   async function handleCandidateTaskUpdate(e: React.FormEvent) {
     e.preventDefault();
     setActionLoading(true);
@@ -307,7 +347,7 @@ export default function Home() {
   const roleClean = String(profile?.role || '').toLowerCase();
   const isAdmin = roleClean === 'super_admin' || roleClean === 'admin';
 
-  // Calculate Attendance Metrics per Volunteer
+  // Metrics Calculation
   const currentMonth = new Date().toISOString().slice(0, 7); // 'YYYY-MM'
   const volunteerStats = volunteers.map((vol) => {
     const volRecords = attendance.filter((a) => a.volunteer_id === vol.id);
@@ -424,7 +464,7 @@ export default function Home() {
 
       {/* Main Content Area */}
       <main className="flex-1 p-6 md:p-8 overflow-y-auto">
-        {/* TAB 1: OVERVIEW */}
+        {/* OVERVIEW */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
             <div>
@@ -452,7 +492,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 2: VOLUNTEERS */}
+        {/* VOLUNTEERS */}
         {activeTab === 'volunteers' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -512,7 +552,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 3: EVENTS */}
+        {/* EVENTS */}
         {activeTab === 'events' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -560,7 +600,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 4: MEETINGS */}
+        {/* MEETINGS */}
         {activeTab === 'meetings' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -611,7 +651,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 5: TASKS & DELIVERABLES */}
+        {/* TASKS */}
         {activeTab === 'tasks' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -706,24 +746,33 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 6: ATTENDANCE TRACKER */}
+        {/* ATTENDANCE TRACKER */}
         {activeTab === 'attendance' && (
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-bold text-slate-900">Attendance Tracker</h2>
-                <p className="text-xs text-slate-500">Track monthly and overall participation percentage for all members</p>
+                <p className="text-xs text-slate-500">Record session attendance and monitor member participation rates</p>
               </div>
               {isAdmin && (
                 <button
-                  onClick={() => { setModalError(''); setShowAttendanceModal(true); }}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-sm font-medium shadow-sm transition"
+                  onClick={() => {
+                    setModalError('');
+                    setSelectedSessionKey(scheduledSessions[0]?.key || '');
+                    const initialStatus: { [id: string]: string } = {};
+                    volunteers.forEach(v => { initialStatus[v.id] = 'present'; });
+                    setAttendanceRecords(initialStatus);
+                    setShowAttendanceModal(true);
+                  }}
+                  disabled={scheduledSessions.length === 0}
+                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3.5 py-2 rounded-lg text-sm font-medium shadow-sm transition"
                 >
-                  <Plus className="w-4 h-4" /> Record Attendance
+                  <Plus className="w-4 h-4" /> Mark Event / Meeting Attendance
                 </button>
               )}
             </div>
 
+            {/* Attendance Analytics Table */}
             <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
               <table className="w-full text-left text-sm text-slate-600">
                 <thead className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase">
@@ -766,9 +815,135 @@ export default function Home() {
                 </tbody>
               </table>
             </div>
+
+            {/* Attendance History Log */}
+            <div className="space-y-3">
+              <h3 className="font-bold text-slate-900 text-base">Recorded Attendance Logs</h3>
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                <table className="w-full text-left text-sm text-slate-600">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase">
+                    <tr>
+                      <th className="px-4 py-3">Session Title</th>
+                      <th className="px-4 py-3">Type</th>
+                      <th className="px-4 py-3">Date</th>
+                      <th className="px-4 py-3">Volunteer</th>
+                      <th className="px-4 py-3">Status</th>
+                      {isAdmin && <th className="px-4 py-3 text-right">Action</th>}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {attendance.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                          No attendance records stored yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      attendance.map((rec) => {
+                        const vol = volunteers.find(v => v.id === rec.volunteer_id);
+                        return (
+                          <tr key={rec.id} className="hover:bg-slate-50">
+                            <td className="px-4 py-3 font-semibold text-slate-900">{rec.event_or_meeting_title}</td>
+                            <td className="px-4 py-3 capitalize text-xs text-slate-500">{rec.session_type || 'Event'}</td>
+                            <td className="px-4 py-3 text-xs">{rec.session_date}</td>
+                            <td className="px-4 py-3 text-slate-800">{vol?.name || vol?.email || 'Unknown'}</td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-block px-2 py-0.5 text-xs rounded-full font-medium ${
+                                rec.status === 'present' ? 'bg-emerald-50 text-emerald-700' :
+                                rec.status === 'excused' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'
+                              }`}>
+                                {rec.status}
+                              </span>
+                            </td>
+                            {isAdmin && (
+                              <td className="px-4 py-3 text-right">
+                                <button
+                                  onClick={() => handleDelete('attendance', rec.id)}
+                                  className="text-slate-400 hover:text-red-600 p-1 rounded"
+                                  title="Delete record"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
       </main>
+
+      {/* MODAL: Record Attendance from Scheduled Events/Meetings */}
+      {showAttendanceModal && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4 max-h-[90vh] flex flex-col">
+            <div className="flex justify-between items-center pb-2 border-b">
+              <div>
+                <h3 className="font-bold text-slate-900">Mark Session Attendance</h3>
+                <p className="text-xs text-slate-500">Pick an active event or meeting to log attendance</p>
+              </div>
+              <button onClick={() => setShowAttendanceModal(false)}><X className="w-5 h-5 text-slate-400" /></button>
+            </div>
+
+            {modalError && <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded-lg">{modalError}</div>}
+
+            <form onSubmit={handleSaveSessionAttendance} className="space-y-4 flex-1 overflow-y-auto pr-1">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Select Drive / Meeting</label>
+                <select
+                  required
+                  value={selectedSessionKey}
+                  onChange={(e) => setSelectedSessionKey(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                >
+                  <option value="">Choose session...</option>
+                  {scheduledSessions.map((s) => (
+                    <option key={s.key} value={s.key}>
+                      [{s.type}] {s.title} ({s.date})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase block mb-2">Member Attendance Status</label>
+                <div className="space-y-2 border rounded-xl p-3 bg-slate-50 max-h-60 overflow-y-auto">
+                  {volunteers.map((vol) => (
+                    <div key={vol.id} className="flex items-center justify-between bg-white p-2.5 rounded-lg border border-slate-200">
+                      <div>
+                        <p className="text-xs font-semibold text-slate-900">{vol.name || 'Unnamed'}</p>
+                        <p className="text-[10px] text-slate-500">{vol.email}</p>
+                      </div>
+                      <select
+                        value={attendanceRecords[vol.id] || 'present'}
+                        onChange={(e) => setAttendanceRecords({ ...attendanceRecords, [vol.id]: e.target.value })}
+                        className="text-xs border rounded-lg px-2 py-1 bg-white font-medium text-slate-700 outline-none"
+                      >
+                        <option value="present">Present</option>
+                        <option value="absent">Absent</option>
+                        <option value="excused">Excused</option>
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={actionLoading}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-2.5 rounded-lg text-sm font-semibold transition"
+              >
+                {actionLoading ? 'Saving Roster Attendance...' : 'Save Roster Attendance'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* MODAL: Add Volunteer */}
       {showVolModal && (
@@ -778,9 +953,7 @@ export default function Home() {
               <h3 className="font-bold text-slate-900">Add New Volunteer</h3>
               <button onClick={() => setShowVolModal(false)}><X className="w-5 h-5 text-slate-400" /></button>
             </div>
-            {modalError && (
-              <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded-lg">{modalError}</div>
-            )}
+            {modalError && <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded-lg">{modalError}</div>}
             <form onSubmit={handleCreateVol} className="space-y-3">
               <div>
                 <label className="text-xs font-semibold text-slate-700 uppercase">Full Name</label>
@@ -958,7 +1131,7 @@ export default function Home() {
                 </div>
               </div>
               <div>
-                <label className="text-xs font-semibold text-slate-700 uppercase">Google Meet / Zoom / Venue</label>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Link or Venue</label>
                 <input
                   required
                   type="text"
@@ -1068,78 +1241,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* MODAL: Record Attendance */}
-      {showAttendanceModal && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
-            <div className="flex justify-between items-center pb-2 border-b">
-              <h3 className="font-bold text-slate-900">Record Attendance</h3>
-              <button onClick={() => setShowAttendanceModal(false)}><X className="w-5 h-5 text-slate-400" /></button>
-            </div>
-            {modalError && <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded-lg">{modalError}</div>}
-            <form onSubmit={handleRecordAttendance} className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-slate-700 uppercase">Volunteer</label>
-                <select
-                  required
-                  value={newAttendance.volunteer_id}
-                  onChange={(e) => setNewAttendance({ ...newAttendance, volunteer_id: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
-                >
-                  <option value="">Select Volunteer...</option>
-                  {volunteers.map((v) => (
-                    <option key={v.id} value={v.id}>{v.name || v.email}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-700 uppercase">Session Title</label>
-                <input
-                  required
-                  type="text"
-                  placeholder="e.g. Mangrove Clean-up Drive or Team Sync"
-                  value={newAttendance.event_or_meeting_title}
-                  onChange={(e) => setNewAttendance({ ...newAttendance, event_or_meeting_title: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 uppercase">Session Date</label>
-                  <input
-                    required
-                    type="date"
-                    value={newAttendance.session_date}
-                    onChange={(e) => setNewAttendance({ ...newAttendance, session_date: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 uppercase">Status</label>
-                  <select
-                    value={newAttendance.status}
-                    onChange={(e) => setNewAttendance({ ...newAttendance, status: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
-                  >
-                    <option value="present">Present</option>
-                    <option value="absent">Absent</option>
-                    <option value="excused">Excused</option>
-                  </select>
-                </div>
-              </div>
-              <button
-                type="submit"
-                disabled={actionLoading}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-semibold transition"
-              >
-                {actionLoading ? 'Saving...' : 'Save Attendance'}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: Candidate Task Update & Extension */}
+      {/* MODAL: Candidate Task Progress */}
       {candidateTaskModal && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
@@ -1168,7 +1270,7 @@ export default function Home() {
                 <label className="text-xs font-semibold text-slate-700 uppercase">Progress Note / Feedback</label>
                 <textarea
                   rows={2}
-                  placeholder="Share current update or links to work..."
+                  placeholder="Share updates, work status, or drive links..."
                   value={candidateUpdate.candidate_comment}
                   onChange={(e) => setCandidateUpdate({ ...candidateUpdate, candidate_comment: e.target.value })}
                   className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
