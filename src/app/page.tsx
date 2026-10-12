@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 import { 
   Users, Calendar, CheckSquare, ShieldCheck, 
   LogOut, AlertCircle, Plus, X, KeyRound, CheckCircle2,
@@ -17,7 +18,7 @@ export default function Home() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'volunteers' | 'events' | 'meetings' | 'tasks' | 'attendance'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'volunteers' | 'events' | 'meetings' | 'tasks' | 'attendance'>('volunteers');
   
   // Datasets
   const [volunteers, setVolunteers] = useState<any[]>([]);
@@ -36,8 +37,9 @@ export default function Home() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordStatus, setPasswordStatus] = useState<{ type: 'error' | 'success' | ''; message: string }>({ type: '', message: '' });
 
+  // Add Volunteer Form State (With Initial Password)
   const [showVolModal, setShowVolModal] = useState(false);
-  const [newVol, setNewVol] = useState({ name: '', email: '', role: 'volunteer', status: 'active' });
+  const [newVol, setNewVol] = useState({ name: '', email: '', password: '', role: 'volunteer', status: 'active' });
 
   const [showEventModal, setShowEventModal] = useState(false);
   const [newEvent, setNewEvent] = useState({ title: '', category: 'Field Drive', date: '', venue_or_link: '', description: '' });
@@ -48,7 +50,7 @@ export default function Home() {
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [newTask, setNewTask] = useState({ title: '', description: '', assigned_to: '', priority: 'Medium', due_date: '' });
 
-  // Event/Meeting linked attendance modal
+  // Attendance modal
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
   const [selectedSessionKey, setSelectedSessionKey] = useState('');
   const [attendanceRecords, setAttendanceRecords] = useState<{ [volunteerId: string]: string }>({});
@@ -144,28 +146,62 @@ export default function Home() {
     else alert('Error deleting: ' + error.message);
   }
 
-  // Create Volunteer with guaranteed UUID
+  // Create Volunteer with Password using an isolated instance
   async function handleCreateVol(e: React.FormEvent) {
     e.preventDefault();
     setModalError('');
     setActionLoading(true);
 
-    const generatedId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined;
-    const insertPayload: any = {
-      name: newVol.name,
-      email: newVol.email,
-      role: newVol.role,
-      status: newVol.status
-    };
-    if (generatedId) insertPayload.id = generatedId;
+    if (newVol.password.length < 6) {
+      setModalError('Temporary password must be at least 6 characters long.');
+      setActionLoading(false);
+      return;
+    }
 
-    const { error } = await supabase.from('profiles').insert([insertPayload]);
-    if (error) {
-      setModalError(error.message);
-    } else {
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://nzqglxczmsfplguomkdg.supabase.co';
+      const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_rMj5ISZjZtA7GeJ0WtHPmg_LJE5AThM';
+      
+      const isolatedAuthClient = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false
+        }
+      });
+
+      const { data, error: signUpError } = await isolatedAuthClient.auth.signUp({
+        email: newVol.email,
+        password: newVol.password,
+        options: {
+          data: {
+            name: newVol.name,
+            role: newVol.role
+          }
+        }
+      });
+
+      if (signUpError) {
+        setModalError(signUpError.message);
+        setActionLoading(false);
+        return;
+      }
+
+      if (data.user) {
+        await supabase.from('profiles').upsert([{
+          id: data.user.id,
+          name: newVol.name,
+          email: newVol.email,
+          role: newVol.role,
+          status: newVol.status
+        }]);
+      }
+
       setShowVolModal(false);
-      setNewVol({ name: '', email: '', role: 'volunteer', status: 'active' });
+      setNewVol({ name: '', email: '', password: '', role: 'volunteer', status: 'active' });
       fetchDashboardData();
+    } catch (err: any) {
+      setModalError(err.message || 'Error creating user account');
     }
     setActionLoading(false);
   }
@@ -220,13 +256,11 @@ export default function Home() {
     setActionLoading(false);
   }
 
-  // Combined list of scheduled sessions (Events & Meetings)
   const scheduledSessions = [
     ...events.map(e => ({ key: `event:${e.id}`, title: e.title, date: e.date, type: 'Event' })),
     ...meetings.map(m => ({ key: `meeting:${m.id}`, title: m.title, date: m.date, type: 'Meeting' }))
   ].sort((a, b) => (a.date < b.date ? 1 : -1));
 
-  // Save full-roster attendance for the selected session
   async function handleSaveSessionAttendance(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedSessionKey) {
@@ -347,8 +381,7 @@ export default function Home() {
   const roleClean = String(profile?.role || '').toLowerCase();
   const isAdmin = roleClean === 'super_admin' || roleClean === 'admin';
 
-  // Metrics Calculation
-  const currentMonth = new Date().toISOString().slice(0, 7); // 'YYYY-MM'
+  const currentMonth = new Date().toISOString().slice(0, 7);
   const volunteerStats = volunteers.map((vol) => {
     const volRecords = attendance.filter((a) => a.volunteer_id === vol.id);
     const overallTotal = volRecords.length;
@@ -945,7 +978,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* MODAL: Add Volunteer */}
+      {/* MODAL: Add Volunteer (With Password Input) */}
       {showVolModal && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
@@ -977,6 +1010,18 @@ export default function Home() {
                   className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
                 />
               </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Initial Password</label>
+                <input
+                  required
+                  type="text"
+                  placeholder="e.g. Volunteer@123"
+                  value={newVol.password}
+                  onChange={(e) => setNewVol({ ...newVol, password: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                />
+                <p className="text-[10px] text-slate-400 mt-0.5">Share this password with them. They can update it after login.</p>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-xs font-semibold text-slate-700 uppercase">Role</label>
@@ -1006,7 +1051,7 @@ export default function Home() {
                 disabled={actionLoading}
                 className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-semibold transition"
               >
-                {actionLoading ? 'Saving...' : 'Save Member'}
+                {actionLoading ? 'Creating Account...' : 'Create Account & Save'}
               </button>
             </form>
           </div>
