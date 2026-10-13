@@ -6,7 +6,8 @@ import { createClient } from '@supabase/supabase-js';
 import { 
   Users, Calendar, CheckSquare, ShieldCheck, 
   LogOut, AlertCircle, Plus, X, KeyRound, CheckCircle2,
-  Trash2, Video, UserCheck, MessageSquare
+  Trash2, Video, UserCheck, MessageSquare, Image as ImageIcon,
+  UploadCloud, Maximize2
 } from 'lucide-react';
 
 export default function Home() {
@@ -18,13 +19,14 @@ export default function Home() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'volunteers' | 'events' | 'meetings' | 'tasks' | 'attendance'>('volunteers');
+  const [activeTab, setActiveTab] = useState<'overview' | 'volunteers' | 'events' | 'meetings' | 'tasks' | 'attendance' | 'gallery'>('overview');
   
   const [volunteers, setVolunteers] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [meetings, setMeetings] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [attendance, setAttendance] = useState<any[]>([]);
+  const [photos, setPhotos] = useState<any[]>([]);
 
   const [actionLoading, setActionLoading] = useState(false);
   const [modalError, setModalError] = useState('');
@@ -52,6 +54,13 @@ export default function Home() {
 
   const [candidateTaskModal, setCandidateTaskModal] = useState<any>(null);
   const [candidateUpdate, setCandidateUpdate] = useState({ status: 'pending', candidate_comment: '', extension_requested: false, requested_due_date: '' });
+
+  // Gallery Modals & States
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [newPhoto, setNewPhoto] = useState({ title: '', category: 'Drive', event_or_meeting_title: '', session_date: '' });
+  const [activeFilter, setActiveFilter] = useState<string>('All');
+  const [previewPhoto, setPreviewPhoto] = useState<any | null>(null);
 
   useEffect(() => {
     async function loadUser() {
@@ -98,6 +107,9 @@ export default function Home() {
 
     const { data: attData } = await supabase.from('attendance').select('*').order('session_date', { ascending: false });
     if (attData) setAttendance(attData);
+
+    const { data: photoData } = await supabase.from('gallery_photos').select('*').order('created_at', { ascending: false });
+    if (photoData) setPhotos(photoData);
   }
 
   async function handleLogin(e: React.FormEvent) {
@@ -167,7 +179,6 @@ export default function Home() {
     else alert('Error deleting: ' + error.message);
   }
 
-  // Instant Role Change from the Directory Table
   async function handleUpdateRole(volId: string, updatedRole: string) {
     const { error } = await supabase
       .from('profiles')
@@ -181,7 +192,6 @@ export default function Home() {
     }
   }
 
-  // Create Volunteer with explicitly saved role
   async function handleCreateVol(e: React.FormEvent) {
     e.preventDefault();
     setModalError('');
@@ -353,6 +363,58 @@ export default function Home() {
     setActionLoading(false);
   }
 
+  // Upload Photo to Supabase Storage & Database
+  async function handleUploadPhoto(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedFile) {
+      setModalError('Please select an image file to upload.');
+      return;
+    }
+
+    setActionLoading(true);
+    setModalError('');
+
+    try {
+      const fileExt = selectedFile.name.split('.').pop();
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+      const filePath = `uploads/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('gallery')
+        .upload(filePath, selectedFile, { cacheControl: '3600', upsert: false });
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('gallery')
+        .getPublicUrl(filePath);
+
+      const publicUrl = urlData.publicUrl;
+
+      const { error: dbError } = await supabase.from('gallery_photos').insert([{
+        title: newPhoto.title,
+        category: newPhoto.category,
+        image_url: publicUrl,
+        uploaded_by: session.user.id,
+        uploader_name: profile?.name || session.user.email,
+        event_or_meeting_title: newPhoto.event_or_meeting_title || null,
+        session_date: newPhoto.session_date || null
+      }]);
+
+      if (dbError) throw dbError;
+
+      setShowPhotoModal(false);
+      setSelectedFile(null);
+      setNewPhoto({ title: '', category: 'Drive', event_or_meeting_title: '', session_date: '' });
+      fetchDashboardData();
+    } catch (err: any) {
+      setModalError(err.message || 'Failed to upload photo');
+    }
+    setActionLoading(false);
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-50">
@@ -441,6 +503,10 @@ export default function Home() {
     };
   });
 
+  const filteredPhotos = activeFilter === 'All' 
+    ? photos 
+    : photos.filter(p => p.category?.toLowerCase() === activeFilter.toLowerCase());
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
       {/* Sidebar */}
@@ -505,6 +571,14 @@ export default function Home() {
             }`}
           >
             <UserCheck className="w-4 h-4" /> Attendance Tracker
+          </button>
+          <button
+            onClick={() => setActiveTab('gallery')}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
+              activeTab === 'gallery' ? 'bg-emerald-600 text-white' : 'hover:bg-slate-800 text-slate-400'
+            }`}
+          >
+            <ImageIcon className="w-4 h-4" /> Volunteer Gallery ({photos.length})
           </button>
         </nav>
 
@@ -965,7 +1039,210 @@ export default function Home() {
             </div>
           </div>
         )}
+
+        {/* VOLUNTEER GALLERY */}
+        {activeTab === 'gallery' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">Volunteer Photo Gallery</h2>
+                <p className="text-xs text-slate-500">Memories, field drives, clean-up milestones, and team meetings</p>
+              </div>
+              <button
+                onClick={() => { setModalError(''); setSelectedFile(null); setShowPhotoModal(true); }}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-sm font-medium shadow-sm transition w-fit"
+              >
+                <UploadCloud className="w-4 h-4" /> Upload Photo
+              </button>
+            </div>
+
+            {/* Filter Pills */}
+            <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+              {['All', 'Drive', 'Meeting', 'Workshop', 'General'].map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setActiveFilter(cat)}
+                  className={`px-3 py-1 text-xs rounded-full font-medium transition ${
+                    activeFilter === cat
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+
+            {/* Photo Grid */}
+            {filteredPhotos.length === 0 ? (
+              <div className="p-16 text-center bg-white rounded-2xl border border-slate-200 text-slate-400 space-y-2">
+                <ImageIcon className="w-10 h-10 mx-auto text-slate-300" />
+                <p className="font-semibold text-slate-600">No photos in this category yet.</p>
+                <p className="text-xs">Click "Upload Photo" above to share memories from your phone or desktop.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {filteredPhotos.map((photo) => (
+                  <div key={photo.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col group relative">
+                    <div 
+                      className="aspect-video bg-slate-100 overflow-hidden relative cursor-pointer"
+                      onClick={() => setPreviewPhoto(photo)}
+                    >
+                      <img 
+                        src={photo.image_url} 
+                        alt={photo.title} 
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        loading="lazy"
+                      />
+                      <div className="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                        <Maximize2 className="w-6 h-6 drop-shadow-md" />
+                      </div>
+                      <span className="absolute top-2 left-2 px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-900/70 text-white backdrop-blur-sm uppercase">
+                        {photo.category}
+                      </span>
+                    </div>
+
+                    <div className="p-3.5 flex-1 flex flex-col justify-between space-y-2">
+                      <div>
+                        <h4 className="font-bold text-slate-900 text-sm line-clamp-1">{photo.title}</h4>
+                        {photo.event_or_meeting_title && (
+                          <p className="text-xs text-emerald-600 font-medium line-clamp-1">{photo.event_or_meeting_title}</p>
+                        )}
+                      </div>
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+                        <span>{photo.session_date || new Date(photo.created_at).toLocaleDateString()}</span>
+                        {canManageOperations && (
+                          <button
+                            onClick={() => handleDelete('gallery_photos', photo.id)}
+                            className="text-slate-400 hover:text-red-600 p-1"
+                            title="Delete Photo"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </main>
+
+      {/* LIGHTBOX PREVIEW MODAL */}
+      {previewPhoto && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="max-w-4xl w-full bg-slate-900 rounded-2xl overflow-hidden shadow-2xl flex flex-col relative text-white">
+            <button 
+              onClick={() => setPreviewPhoto(null)} 
+              className="absolute top-4 right-4 bg-slate-800/80 hover:bg-slate-700 text-white p-2 rounded-full z-10 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="max-h-[75vh] bg-black flex items-center justify-center overflow-hidden">
+              <img src={previewPhoto.image_url} alt={previewPhoto.title} className="max-h-[75vh] w-auto object-contain" />
+            </div>
+            <div className="p-4 bg-slate-900 flex justify-between items-center">
+              <div>
+                <h3 className="text-base font-bold">{previewPhoto.title}</h3>
+                <p className="text-xs text-slate-400">
+                  {previewPhoto.event_or_meeting_title ? `${previewPhoto.event_or_meeting_title} • ` : ''}
+                  Uploaded by {previewPhoto.uploader_name || 'Volunteer'}
+                </p>
+              </div>
+              <span className="text-xs px-2.5 py-1 bg-emerald-950 text-emerald-400 border border-emerald-800 rounded font-semibold uppercase">
+                {previewPhoto.category}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Upload Photo */}
+      {showPhotoModal && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b">
+              <h3 className="font-bold text-slate-900">Upload to Volunteer Gallery</h3>
+              <button onClick={() => setShowPhotoModal(false)}><X className="w-5 h-5 text-slate-400" /></button>
+            </div>
+            {modalError && <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded-lg">{modalError}</div>}
+            
+            <form onSubmit={handleUploadPhoto} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Select Image</label>
+                <input
+                  required
+                  type="file"
+                  accept="image/png, image/jpeg, image/jpg, image/webp"
+                  onChange={(e) => setSelectedFile(e.target.files ? e.target.files[0] : null)}
+                  className="w-full px-3 py-2 border rounded-lg text-xs text-slate-600 mt-1 file:mr-2 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Caption / Title</label>
+                <input
+                  required
+                  type="text"
+                  placeholder="e.g. Mangrove planting milestone group photo"
+                  value={newPhoto.title}
+                  onChange={(e) => setNewPhoto({ ...newPhoto, title: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 uppercase">Category</label>
+                  <select
+                    value={newPhoto.category}
+                    onChange={(e) => setNewPhoto({ ...newPhoto, category: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                  >
+                    <option value="Drive">Field Drive</option>
+                    <option value="Meeting">Meeting</option>
+                    <option value="Workshop">Workshop</option>
+                    <option value="General">General</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 uppercase">Date</label>
+                  <input
+                    type="date"
+                    value={newPhoto.session_date}
+                    onChange={(e) => setNewPhoto({ ...newPhoto, session_date: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Associated Drive / Meeting (Optional)</label>
+                <select
+                  value={newPhoto.event_or_meeting_title}
+                  onChange={(e) => setNewPhoto({ ...newPhoto, event_or_meeting_title: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                >
+                  <option value="">None / Standalone</option>
+                  {scheduledSessions.map((s) => (
+                    <option key={s.key} value={s.title}>{s.title} ({s.date})</option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                type="submit"
+                disabled={actionLoading}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-semibold transition mt-2"
+              >
+                {actionLoading ? 'Uploading Image...' : 'Upload Image'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* MODAL: Attendance */}
       {showAttendanceModal && (
