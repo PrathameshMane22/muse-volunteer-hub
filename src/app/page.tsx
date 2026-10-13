@@ -448,7 +448,7 @@ export default function Home() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="prathammane18@gmail.com"
+                placeholder="Your Email ID"
                 className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-sm text-slate-900"
               />
             </div>
@@ -457,7 +457,7 @@ export default function Home() {
               <input
                 type="password"
                 required
-                value={password}
+                value={Password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-sm text-slate-900"
