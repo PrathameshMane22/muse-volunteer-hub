@@ -1,4 +1,3 @@
-@'
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -1970,4 +1969,3 @@ export default function Home() {
     </div>
   );
 }
-'@ | Set-Content -Path src/app/page.tsx
