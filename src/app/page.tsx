@@ -1,3 +1,4 @@
+@'
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -7,7 +8,7 @@ import {
   Users, Calendar, CheckSquare, ShieldCheck, 
   LogOut, AlertCircle, Plus, X, KeyRound, CheckCircle2,
   Trash2, Video, UserCheck, MessageSquare, Image as ImageIcon,
-  UploadCloud, Maximize2
+  UploadCloud, Maximize2, CheckCheck, Clock
 } from 'lucide-react';
 
 export default function Home() {
@@ -45,15 +46,23 @@ export default function Home() {
   const [showMeetingModal, setShowMeetingModal] = useState(false);
   const [newMeeting, setNewMeeting] = useState({ title: '', date: '', time: '18:00', link_or_venue: '', agenda: '' });
 
+  // Task creation modals
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [isSelfTask, setIsSelfTask] = useState(false);
   const [newTask, setNewTask] = useState({ title: '', description: '', assigned_to: '', priority: 'Medium', due_date: '' });
 
+  // Attendance modal
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
   const [selectedSessionKey, setSelectedSessionKey] = useState('');
   const [attendanceRecords, setAttendanceRecords] = useState<{ [volunteerId: string]: string }>({});
 
+  // Candidate task update modal
   const [candidateTaskModal, setCandidateTaskModal] = useState<any>(null);
   const [candidateUpdate, setCandidateUpdate] = useState({ status: 'pending', candidate_comment: '', extension_requested: false, requested_due_date: '' });
+
+  // Admin task verification modal
+  const [adminReviewModal, setAdminReviewModal] = useState<any>(null);
+  const [adminReviewData, setAdminReviewData] = useState({ is_verified: false, admin_comment: '', status: 'pending' });
 
   // Gallery Modals & States
   const [showPhotoModal, setShowPhotoModal] = useState(false);
@@ -102,7 +111,7 @@ export default function Home() {
     const { data: meetData } = await supabase.from('meetings').select('*').order('date', { ascending: true });
     if (meetData) setMeetings(meetData);
 
-    const { data: taskData } = await supabase.from('tasks').select('*');
+    const { data: taskData } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
     if (taskData) setTasks(taskData);
 
     const { data: attData } = await supabase.from('attendance').select('*').order('session_date', { ascending: false });
@@ -283,18 +292,27 @@ export default function Home() {
     e.preventDefault();
     setModalError('');
     setActionLoading(true);
+
+    const isSelf = isSelfTask || (!canManageOperations);
+    const assignedUser = isSelf ? session.user.id : (newTask.assigned_to || null);
+
     const payload = {
       title: newTask.title,
       description: newTask.description,
       priority: newTask.priority,
       status: 'pending',
       due_date: newTask.due_date || null,
-      assigned_to: newTask.assigned_to || null
+      assigned_to: assignedUser,
+      created_by: session.user.id,
+      is_verified: canManageOperations ? true : false
     };
+
     const { error } = await supabase.from('tasks').insert([payload]);
-    if (error) setModalError(error.message);
-    else {
+    if (error) {
+      setModalError(error.message);
+    } else {
       setShowTaskModal(false);
+      setIsSelfTask(false);
       setNewTask({ title: '', description: '', assigned_to: '', priority: 'Medium', due_date: '' });
       fetchDashboardData();
     }
@@ -363,7 +381,62 @@ export default function Home() {
     setActionLoading(false);
   }
 
-  // Upload Photo to Supabase Storage & Database
+  async function handleAdminReviewSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setActionLoading(true);
+    const payload = {
+      is_verified: adminReviewData.is_verified,
+      admin_comment: adminReviewData.admin_comment,
+      status: adminReviewData.status,
+      verified_by: session.user.id
+    };
+    const { error } = await supabase.from('tasks').update(payload).eq('id', adminReviewModal.id);
+    if (!error) {
+      setAdminReviewModal(null);
+      fetchDashboardData();
+    } else {
+      alert('Error updating review: ' + error.message);
+    }
+    setActionLoading(false);
+  }
+
+  async function compressImage(file: File): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const maxDim = 1280;
+          let width = img.width;
+          let height = img.height;
+          if (width > height && width > maxDim) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else if (height > maxDim) {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          canvas.toBlob(
+            (blob) => {
+              if (blob) resolve(blob);
+              else reject(new Error('Image compression failed'));
+            },
+            'image/webp',
+            0.8
+          );
+        };
+      };
+      reader.onerror = (err) => reject(err);
+    });
+  }
+
   async function handleUploadPhoto(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedFile) {
@@ -375,17 +448,15 @@ export default function Home() {
     setModalError('');
 
     try {
-      const fileExt = selectedFile.name.split('.').pop();
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+      const compressedBlob = await compressImage(selectedFile);
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.webp`;
       const filePath = `uploads/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('gallery')
-        .upload(filePath, selectedFile, { cacheControl: '3600', upsert: false });
+        .upload(filePath, compressedBlob, { contentType: 'image/webp', cacheControl: '3600', upsert: false });
 
-      if (uploadError) {
-        throw uploadError;
-      }
+      if (uploadError) throw uploadError;
 
       const { data: urlData } = supabase.storage
         .from('gallery')
@@ -427,13 +498,21 @@ export default function Home() {
     return (
       <main className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
-          <div className="flex items-center space-x-3 mb-6">
-            <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white font-bold text-xl">M</div>
+          {/* Logo Integration on Login Screen */}
+          <div className="flex items-center space-x-3.5 mb-6">
+            <div className="h-12 w-12 bg-white border border-slate-200 rounded-xl p-1.5 flex items-center justify-center shadow-sm overflow-hidden shrink-0">
+              <img 
+                src="/muse-logo.png" 
+                alt="MUSE Foundation" 
+                className="w-full h-full object-contain" 
+              />
+            </div>
             <div>
-              <h1 className="text-xl font-bold text-slate-900">MUSE Volunteer Hub</h1>
-              <p className="text-xs text-slate-500">MUSE Foundation Operations Portal</p>
+              <h1 className="text-xl font-bold text-slate-900 leading-tight">MUSE Volunteer Hub</h1>
+              <p className="text-xs text-slate-500 font-medium">think. ask. act. • Operations Portal</p>
             </div>
           </div>
+
           <form onSubmit={handleLogin} className="space-y-4">
             {authError && (
               <div className="p-3 bg-red-50 text-red-700 text-sm rounded-lg flex items-center gap-2 border border-red-200">
@@ -448,7 +527,7 @@ export default function Home() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="Your Email ID"
+                placeholder="prathammane18@gmail.com"
                 className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-sm text-slate-900"
               />
             </div>
@@ -457,7 +536,7 @@ export default function Home() {
               <input
                 type="password"
                 required
-                value={Password}
+                value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-sm text-slate-900"
@@ -511,10 +590,20 @@ export default function Home() {
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
       {/* Sidebar */}
       <aside className="w-full md:w-64 bg-slate-900 text-slate-200 flex flex-col">
+        {/* Logo Integration in Sidebar Header */}
         <div className="p-5 border-b border-slate-800 flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center font-bold text-white">M</div>
-            <span className="font-bold text-white text-base">MUSE Hub</span>
+          <div className="flex items-center space-x-3">
+            <div className="h-10 w-10 bg-white rounded-xl p-1 flex items-center justify-center shadow-sm overflow-hidden shrink-0">
+              <img 
+                src="/muse-logo.png" 
+                alt="MUSE Foundation" 
+                className="w-full h-full object-contain" 
+              />
+            </div>
+            <div>
+              <span className="font-bold text-white text-base leading-tight block">MUSE Hub</span>
+              <span className="text-[10px] text-slate-400 block tracking-tight">think. ask. act.</span>
+            </div>
           </div>
           <span className="text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 px-2 py-0.5 rounded font-mono uppercase">
             {profile?.role || 'volunteer'}
@@ -819,55 +908,89 @@ export default function Home() {
         {/* TASKS */}
         {activeTab === 'tasks' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h2 className="text-xl font-bold text-slate-900">Tasks & Deliverables</h2>
-                <p className="text-xs text-slate-500">Track assignment progress, updates, and extension requests</p>
+                <p className="text-xs text-slate-500">Track assignments, volunteer self-tasks, reviews, and deadline extensions</p>
               </div>
-              {canManageOperations && (
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => { setModalError(''); setShowTaskModal(true); }}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-sm font-medium shadow-sm transition"
+                  onClick={() => { 
+                    setModalError(''); 
+                    setIsSelfTask(true); 
+                    setNewTask({ title: '', description: '', assigned_to: session.user.id, priority: 'Medium', due_date: '' });
+                    setShowTaskModal(true); 
+                  }}
+                  className="flex items-center gap-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-3.5 py-2 rounded-lg text-sm font-semibold shadow-sm transition"
                 >
-                  <Plus className="w-4 h-4" /> Assign Task
+                  <Plus className="w-4 h-4" /> Add My Task
                 </button>
-              )}
+
+                {canManageOperations && (
+                  <button
+                    onClick={() => { 
+                      setModalError(''); 
+                      setIsSelfTask(false); 
+                      setNewTask({ title: '', description: '', assigned_to: '', priority: 'Medium', due_date: '' });
+                      setShowTaskModal(true); 
+                    }}
+                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-sm font-semibold shadow-sm transition"
+                  >
+                    <Plus className="w-4 h-4" /> Assign To Member
+                  </button>
+                )}
+              </div>
             </div>
+
             <div className="space-y-3">
               {tasks.length === 0 ? (
                 <div className="p-12 text-center bg-white rounded-xl border border-slate-200 text-slate-400">
-                  No tasks assigned yet.
+                  No tasks assigned or created yet.
                 </div>
               ) : (
                 tasks.map((task) => {
                   const assignedUser = volunteers.find((v) => v.id === task.assigned_to);
                   const isAssignedToMe = task.assigned_to === session?.user?.id;
+                  const isCreatedByMe = task.created_by === session?.user?.id;
 
                   return (
                     <div key={task.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-3 relative">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="flex items-center gap-2">
+                      <div className="flex justify-between items-start gap-4">
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
                             <h4 className="font-bold text-slate-900 text-base">{task.title}</h4>
                             <span className="text-xs px-2.5 py-0.5 bg-slate-100 rounded-full text-slate-700 font-medium">
                               {task.status}
                             </span>
+
+                            {task.is_verified ? (
+                              <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-semibold">
+                                <CheckCheck className="w-3 h-3" /> Verified by Lead
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">
+                                <Clock className="w-3 h-3" /> Awaiting Verification
+                              </span>
+                            )}
+
                             {task.extension_requested && (
                               <span className="text-xs px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">
                                 Extension Requested (New Date: {task.requested_due_date || 'N/A'})
                               </span>
                             )}
                           </div>
-                          <p className="text-xs text-slate-600 mt-1">{task.description}</p>
-                          <div className="text-[11px] text-slate-400 mt-1 flex gap-4">
+
+                          <p className="text-xs text-slate-600">{task.description}</p>
+                          
+                          <div className="text-[11px] text-slate-400 flex flex-wrap gap-x-4 gap-y-1 pt-1">
                             <span>Assigned to: <strong className="text-slate-700">{assignedUser?.name || assignedUser?.email || 'Unassigned'}</strong></span>
                             <span>Due: <strong className="text-slate-700">{task.due_date || 'None'}</strong></span>
                             <span>Priority: <strong className="text-slate-700">{task.priority}</strong></span>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          {(isAssignedToMe || canManageOperations) && (
+                        <div className="flex items-center gap-2 shrink-0">
+                          {(isAssignedToMe || isCreatedByMe || canManageOperations) && (
                             <button
                               onClick={() => {
                                 setCandidateTaskModal(task);
@@ -878,11 +1001,28 @@ export default function Home() {
                                   requested_due_date: task.requested_due_date || ''
                                 });
                               }}
-                              className="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded-lg font-semibold transition"
+                              className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-semibold transition"
                             >
-                              Update Status / Notes
+                              My Update
                             </button>
                           )}
+
+                          {canManageOperations && (
+                            <button
+                              onClick={() => {
+                                setAdminReviewModal(task);
+                                setAdminReviewData({
+                                  is_verified: task.is_verified || false,
+                                  admin_comment: task.admin_comment || '',
+                                  status: task.status || 'pending'
+                                });
+                              }}
+                              className="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-3 py-1.5 rounded-lg font-semibold transition"
+                            >
+                              Review & Verify
+                            </button>
+                          )}
+
                           {canManageOperations && (
                             <button
                               onClick={() => handleDelete('tasks', task.id)}
@@ -895,14 +1035,25 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {task.candidate_comment && (
-                        <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-xs text-slate-700 flex items-start gap-2">
-                          <MessageSquare className="w-3.5 h-3.5 mt-0.5 text-slate-400 shrink-0" />
-                          <div>
-                            <strong className="text-slate-900">Volunteer Update:</strong> {task.candidate_comment}
+                      <div className="space-y-1.5 pt-1">
+                        {task.candidate_comment && (
+                          <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-xs text-slate-700 flex items-start gap-2">
+                            <MessageSquare className="w-3.5 h-3.5 mt-0.5 text-slate-400 shrink-0" />
+                            <div>
+                              <strong className="text-slate-900">Volunteer Update:</strong> {task.candidate_comment}
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        )}
+
+                        {task.admin_comment && (
+                          <div className="bg-emerald-50/70 p-2.5 rounded-lg border border-emerald-200 text-xs text-emerald-900 flex items-start gap-2">
+                            <ShieldCheck className="w-3.5 h-3.5 mt-0.5 text-emerald-600 shrink-0" />
+                            <div>
+                              <strong className="text-emerald-950">Lead Review / Feedback:</strong> {task.admin_comment}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   );
                 })
@@ -1056,7 +1207,6 @@ export default function Home() {
               </button>
             </div>
 
-            {/* Filter Pills */}
             <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
               {['All', 'Drive', 'Meeting', 'Workshop', 'General'].map((cat) => (
                 <button
@@ -1073,7 +1223,6 @@ export default function Home() {
               ))}
             </div>
 
-            {/* Photo Grid */}
             {filteredPhotos.length === 0 ? (
               <div className="p-16 text-center bg-white rounded-2xl border border-slate-200 text-slate-400 space-y-2">
                 <ImageIcon className="w-10 h-10 mx-auto text-slate-300" />
@@ -1130,7 +1279,7 @@ export default function Home() {
         )}
       </main>
 
-      {/* LIGHTBOX PREVIEW MODAL */}
+      {/* LIGHTBOX PREVIEW */}
       {previewPhoto && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="max-w-4xl w-full bg-slate-900 rounded-2xl overflow-hidden shadow-2xl flex flex-col relative text-white">
@@ -1186,7 +1335,7 @@ export default function Home() {
                 <input
                   required
                   type="text"
-                  placeholder="e.g. Mangrove planting milestone group photo"
+                  placeholder="e.g. Mangrove planting group photo"
                   value={newPhoto.title}
                   onChange={(e) => setNewPhoto({ ...newPhoto, title: e.target.value })}
                   className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
@@ -1237,7 +1386,230 @@ export default function Home() {
                 disabled={actionLoading}
                 className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-semibold transition mt-2"
               >
-                {actionLoading ? 'Uploading Image...' : 'Upload Image'}
+                {actionLoading ? 'Optimizing & Uploading...' : 'Upload Image'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Assign / Add Task */}
+      {showTaskModal && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b">
+              <h3 className="font-bold text-slate-900">
+                {isSelfTask ? 'Add My Task / Goal' : 'Assign New Task'}
+              </h3>
+              <button onClick={() => setShowTaskModal(false)}><X className="w-5 h-5 text-slate-400" /></button>
+            </div>
+            {modalError && <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded-lg">{modalError}</div>}
+            
+            <form onSubmit={handleCreateTask} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Task Title</label>
+                <input
+                  required
+                  type="text"
+                  placeholder="e.g. Conduct Survey in Sector 4"
+                  value={newTask.title}
+                  onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                />
+              </div>
+
+              {!isSelfTask && canManageOperations && (
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 uppercase">Assign To Volunteer</label>
+                  <select
+                    value={newTask.assigned_to}
+                    onChange={(e) => setNewTask({ ...newTask, assigned_to: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                  >
+                    <option value="">Leave Unassigned</option>
+                    {volunteers.map((v) => (
+                      <option key={v.id} value={v.id}>{v.name || v.email}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 uppercase">Priority</label>
+                  <select
+                    value={newTask.priority}
+                    onChange={(e) => setNewTask({ ...newTask, priority: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                  >
+                    <option value="Low">Low</option>
+                    <option value="Medium">Medium</option>
+                    <option value="High">High</option>
+                    <option value="Urgent">Urgent</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 uppercase">Target Due Date</label>
+                  <input
+                    type="date"
+                    value={newTask.due_date}
+                    onChange={(e) => setNewTask({ ...newTask, due_date: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Task Description & Plan</label>
+                <textarea
+                  rows={2}
+                  placeholder="Outline the steps you plan to take..."
+                  value={newTask.description}
+                  onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={actionLoading}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-semibold transition"
+              >
+                {actionLoading ? 'Saving...' : isSelfTask ? 'Save My Task' : 'Assign Task'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Admin Review & Verification */}
+      {adminReviewModal && canManageOperations && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b">
+              <div>
+                <h3 className="font-bold text-slate-900">Task Review & Verification</h3>
+                <p className="text-xs text-slate-500">{adminReviewModal.title}</p>
+              </div>
+              <button onClick={() => setAdminReviewModal(null)}><X className="w-5 h-5 text-slate-400" /></button>
+            </div>
+
+            <form onSubmit={handleAdminReviewSubmit} className="space-y-4">
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <label className="flex items-center gap-2 cursor-pointer font-semibold text-xs text-slate-800">
+                  <input
+                    type="checkbox"
+                    checked={adminReviewData.is_verified}
+                    onChange={(e) => setAdminReviewData({ ...adminReviewData, is_verified: e.target.checked })}
+                    className="w-4 h-4 text-emerald-600 rounded"
+                  />
+                  Mark Task as Verified / Approved
+                </label>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Confirms that this volunteer task aligns with organization goals.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Overall Task Status</label>
+                <select
+                  value={adminReviewData.status}
+                  onChange={(e) => setAdminReviewData({ ...adminReviewData, status: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                >
+                  <option value="pending">Pending</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                  <option value="blocked">Blocked</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Admin Feedback / Review Comment</label>
+                <textarea
+                  rows={3}
+                  placeholder="Leave guidance, approval notes, or required next steps for the volunteer..."
+                  value={adminReviewData.admin_comment}
+                  onChange={(e) => setAdminReviewData({ ...adminReviewData, admin_comment: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={actionLoading}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-semibold transition"
+              >
+                {actionLoading ? 'Saving Review...' : 'Save Review & Verification'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Candidate Task Progress */}
+      {candidateTaskModal && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b">
+              <div>
+                <h3 className="font-bold text-slate-900">Task Status & Progress</h3>
+                <p className="text-xs text-slate-500">{candidateTaskModal.title}</p>
+              </div>
+              <button onClick={() => setCandidateTaskModal(null)}><X className="w-5 h-5 text-slate-400" /></button>
+            </div>
+            <form onSubmit={handleCandidateTaskUpdate} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Status</label>
+                <select
+                  value={candidateUpdate.status}
+                  onChange={(e) => setCandidateUpdate({ ...candidateUpdate, status: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                >
+                  <option value="pending">Pending</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                  <option value="blocked">Blocked</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 uppercase">Progress Note / Feedback</label>
+                <textarea
+                  rows={2}
+                  placeholder="Share updates, work status, or drive links..."
+                  value={candidateUpdate.candidate_comment}
+                  onChange={(e) => setCandidateUpdate({ ...candidateUpdate, candidate_comment: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                />
+              </div>
+              <div className="pt-2 border-t">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={candidateUpdate.extension_requested}
+                    onChange={(e) => setCandidateUpdate({ ...candidateUpdate, extension_requested: e.target.checked })}
+                    className="w-4 h-4 text-emerald-600 rounded"
+                  />
+                  Request Deadline Extension
+                </label>
+                {candidateUpdate.extension_requested && (
+                  <div className="mt-2">
+                    <label className="text-xs text-slate-500 uppercase">Proposed Due Date</label>
+                    <input
+                      type="date"
+                      value={candidateUpdate.requested_due_date}
+                      onChange={(e) => setCandidateUpdate({ ...candidateUpdate, requested_due_date: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
+                    />
+                  </div>
+                )}
+              </div>
+              <button
+                type="submit"
+                disabled={actionLoading}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-semibold transition"
+              >
+                {actionLoading ? 'Updating...' : 'Submit Update'}
               </button>
             </form>
           </div>
@@ -1540,154 +1912,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* MODAL: Task */}
-      {showTaskModal && canManageOperations && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4">
-            <div className="flex justify-between items-center pb-2 border-b">
-              <h3 className="font-bold text-slate-900">Assign New Task</h3>
-              <button onClick={() => setShowTaskModal(false)}><X className="w-5 h-5 text-slate-400" /></button>
-            </div>
-            {modalError && <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded-lg">{modalError}</div>}
-            <form onSubmit={handleCreateTask} className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-slate-700 uppercase">Task Title</label>
-                <input
-                  required
-                  type="text"
-                  placeholder="e.g. Design Event Flyers"
-                  value={newTask.title}
-                  onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-700 uppercase">Assign To Volunteer</label>
-                <select
-                  value={newTask.assigned_to}
-                  onChange={(e) => setNewTask({ ...newTask, assigned_to: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
-                >
-                  <option value="">Leave Unassigned</option>
-                  {volunteers.map((v) => (
-                    <option key={v.id} value={v.id}>{v.name || v.email}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 uppercase">Priority</label>
-                  <select
-                    value={newTask.priority}
-                    onChange={(e) => setNewTask({ ...newTask, priority: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
-                  >
-                    <option value="Low">Low</option>
-                    <option value="Medium">Medium</option>
-                    <option value="High">High</option>
-                    <option value="Urgent">Urgent</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 uppercase">Due Date</label>
-                  <input
-                    type="date"
-                    value={newTask.due_date}
-                    onChange={(e) => setNewTask({ ...newTask, due_date: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-700 uppercase">Task Instructions</label>
-                <textarea
-                  rows={2}
-                  value={newTask.description}
-                  onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={actionLoading}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-semibold transition"
-              >
-                {actionLoading ? 'Saving...' : 'Assign Task'}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: Candidate Task Progress */}
-      {candidateTaskModal && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
-            <div className="flex justify-between items-center pb-2 border-b">
-              <div>
-                <h3 className="font-bold text-slate-900">Task Status & Progress</h3>
-                <p className="text-xs text-slate-500">{candidateTaskModal.title}</p>
-              </div>
-              <button onClick={() => setCandidateTaskModal(null)}><X className="w-5 h-5 text-slate-400" /></button>
-            </div>
-            <form onSubmit={handleCandidateTaskUpdate} className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-slate-700 uppercase">Status</label>
-                <select
-                  value={candidateUpdate.status}
-                  onChange={(e) => setCandidateUpdate({ ...candidateUpdate, status: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
-                >
-                  <option value="pending">Pending</option>
-                  <option value="in_progress">In Progress</option>
-                  <option value="completed">Completed</option>
-                  <option value="blocked">Blocked</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-700 uppercase">Progress Note / Feedback</label>
-                <textarea
-                  rows={2}
-                  placeholder="Share updates, work status, or drive links..."
-                  value={candidateUpdate.candidate_comment}
-                  onChange={(e) => setCandidateUpdate({ ...candidateUpdate, candidate_comment: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
-                />
-              </div>
-              <div className="pt-2 border-t">
-                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={candidateUpdate.extension_requested}
-                    onChange={(e) => setCandidateUpdate({ ...candidateUpdate, extension_requested: e.target.checked })}
-                    className="w-4 h-4 text-emerald-600 rounded"
-                  />
-                  Request Deadline Extension
-                </label>
-                {candidateUpdate.extension_requested && (
-                  <div className="mt-2">
-                    <label className="text-xs text-slate-500 uppercase">Proposed Due Date</label>
-                    <input
-                      type="date"
-                      value={candidateUpdate.requested_due_date}
-                      onChange={(e) => setCandidateUpdate({ ...candidateUpdate, requested_due_date: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-lg text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500 mt-1"
-                    />
-                  </div>
-                )}
-              </div>
-              <button
-                type="submit"
-                disabled={actionLoading}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-semibold transition"
-              >
-                {actionLoading ? 'Updating...' : 'Submit Update'}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* MODAL: Change Password */}
       {showPasswordModal && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
@@ -1746,3 +1970,4 @@ export default function Home() {
     </div>
   );
 }
+'@ | Set-Content -Path src/app/page.tsx
