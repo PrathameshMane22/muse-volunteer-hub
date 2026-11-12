@@ -7,7 +7,7 @@ import {
   Users, Calendar, CheckSquare, ShieldCheck, 
   LogOut, AlertCircle, Plus, X, KeyRound, CheckCircle2,
   Trash2, Video, UserCheck, MessageSquare, Image as ImageIcon,
-  UploadCloud, Maximize2, CheckCheck, Clock
+  UploadCloud, Maximize2, CheckCheck, Clock, Download
 } from 'lucide-react';
 
 export default function Home() {
@@ -485,6 +485,101 @@ export default function Home() {
     setActionLoading(false);
   }
 
+  const roleClean = String(profile?.role || '').toLowerCase();
+  const isSuperAdmin = roleClean === 'super_admin';
+  const isDomainLead = roleClean === 'admin';
+  const canManageOperations = isSuperAdmin || isDomainLead;
+
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const volunteerStats = volunteers.map((vol) => {
+    const volRecords = attendance.filter((a) => a.volunteer_id === vol.id);
+    const overallTotal = volRecords.length;
+    const overallPresent = volRecords.filter((a) => a.status === 'present').length;
+    const overallPct = overallTotal > 0 ? Math.round((overallPresent / overallTotal) * 100) : 0;
+
+    const monthRecords = volRecords.filter((a) => a.session_date && a.session_date.startsWith(currentMonth));
+    const monthTotal = monthRecords.length;
+    const monthPresent = monthRecords.filter((a) => a.status === 'present').length;
+    const monthPct = monthTotal > 0 ? Math.round((monthPresent / monthTotal) * 100) : 0;
+
+    return {
+      ...vol,
+      overallPresent,
+      overallTotal,
+      overallPct,
+      monthPresent,
+      monthTotal,
+      monthPct
+    };
+  });
+
+  function handleExportAttendanceExcel() {
+    const summaryHeaders = [
+      'Volunteer Name',
+      'Email',
+      'Role',
+      `Sessions Present (${currentMonth})`,
+      `Total Sessions (${currentMonth})`,
+      'Monthly %',
+      'Overall Present',
+      'Overall Total Sessions',
+      'Overall Attendance %'
+    ];
+
+    const summaryRows = volunteerStats.map((v) => [
+      `"${(v.name || 'Unnamed').replace(/"/g, '""')}"`,
+      `"${v.email}"`,
+      `"${v.role}"`,
+      v.monthPresent,
+      v.monthTotal,
+      `${v.monthPct}%`,
+      v.overallPresent,
+      v.overallTotal,
+      `${v.overallPct}%`
+    ]);
+
+    const logHeaders = [
+      'Session Title',
+      'Session Type',
+      'Date',
+      'Volunteer Name',
+      'Volunteer Email',
+      'Attendance Status'
+    ];
+
+    const logRows = attendance.map((rec) => {
+      const vol = volunteers.find((v) => v.id === rec.volunteer_id);
+      return [
+        `"${(rec.event_or_meeting_title || '').replace(/"/g, '""')}"`,
+        `"${rec.session_type || 'event'}"`,
+        `"${rec.session_date || ''}"`,
+        `"${(vol?.name || 'Unknown').replace(/"/g, '""')}"`,
+        `"${vol?.email || ''}"`,
+        `"${rec.status}"`
+      ];
+    });
+
+    const csvContent = [
+      '--- VOLUNTEER ATTENDANCE SUMMARY ---',
+      summaryHeaders.join(','),
+      ...summaryRows.map((r) => r.join(',')),
+      '',
+      '--- DETAILED SESSION LOGS ---',
+      logHeaders.join(','),
+      ...logRows.map((r) => r.join(','))
+    ].join('\n');
+
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `MUSE_Attendance_Report_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-50">
@@ -497,7 +592,6 @@ export default function Home() {
     return (
       <main className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
-          {/* Logo Integration on Login Screen */}
           <div className="flex items-center space-x-3.5 mb-6">
             <div className="h-12 w-12 bg-white border border-slate-200 rounded-xl p-1.5 flex items-center justify-center shadow-sm overflow-hidden shrink-0">
               <img 
@@ -553,34 +647,6 @@ export default function Home() {
     );
   }
 
-  const roleClean = String(profile?.role || '').toLowerCase();
-  const isSuperAdmin = roleClean === 'super_admin';
-  const isDomainLead = roleClean === 'admin';
-  const canManageOperations = isSuperAdmin || isDomainLead;
-
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  const volunteerStats = volunteers.map((vol) => {
-    const volRecords = attendance.filter((a) => a.volunteer_id === vol.id);
-    const overallTotal = volRecords.length;
-    const overallPresent = volRecords.filter((a) => a.status === 'present').length;
-    const overallPct = overallTotal > 0 ? Math.round((overallPresent / overallTotal) * 100) : 0;
-
-    const monthRecords = volRecords.filter((a) => a.session_date && a.session_date.startsWith(currentMonth));
-    const monthTotal = monthRecords.length;
-    const monthPresent = monthRecords.filter((a) => a.status === 'present').length;
-    const monthPct = monthTotal > 0 ? Math.round((monthPresent / monthTotal) * 100) : 0;
-
-    return {
-      ...vol,
-      overallPresent,
-      overallTotal,
-      overallPct,
-      monthPresent,
-      monthTotal,
-      monthPct
-    };
-  });
-
   const filteredPhotos = activeFilter === 'All' 
     ? photos 
     : photos.filter(p => p.category?.toLowerCase() === activeFilter.toLowerCase());
@@ -589,7 +655,6 @@ export default function Home() {
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
       {/* Sidebar */}
       <aside className="w-full md:w-64 bg-slate-900 text-slate-200 flex flex-col">
-        {/* Logo Integration in Sidebar Header */}
         <div className="p-5 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div className="h-10 w-10 bg-white rounded-xl p-1 flex items-center justify-center shadow-sm overflow-hidden shrink-0">
@@ -1064,26 +1129,34 @@ export default function Home() {
         {/* ATTENDANCE TRACKER */}
         {activeTab === 'attendance' && (
           <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h2 className="text-xl font-bold text-slate-900">Attendance Tracker</h2>
                 <p className="text-xs text-slate-500">Record session attendance and monitor member participation rates</p>
               </div>
               {canManageOperations && (
-                <button
-                  onClick={() => {
-                    setModalError('');
-                    setSelectedSessionKey(scheduledSessions[0]?.key || '');
-                    const initialStatus: { [id: string]: string } = {};
-                    volunteers.forEach(v => { initialStatus[v.id] = 'present'; });
-                    setAttendanceRecords(initialStatus);
-                    setShowAttendanceModal(true);
-                  }}
-                  disabled={scheduledSessions.length === 0}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3.5 py-2 rounded-lg text-sm font-medium shadow-sm transition"
-                >
-                  <Plus className="w-4 h-4" /> Mark Event / Meeting Attendance
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleExportAttendanceExcel}
+                    className="flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3.5 py-2 rounded-lg text-sm font-medium shadow-sm transition"
+                  >
+                    <Download className="w-4 h-4" /> Export Excel
+                  </button>
+                  <button
+                    onClick={() => {
+                      setModalError('');
+                      setSelectedSessionKey(scheduledSessions[0]?.key || '');
+                      const initialStatus: { [id: string]: string } = {};
+                      volunteers.forEach(v => { initialStatus[v.id] = 'present'; });
+                      setAttendanceRecords(initialStatus);
+                      setShowAttendanceModal(true);
+                    }}
+                    disabled={scheduledSessions.length === 0}
+                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3.5 py-2 rounded-lg text-sm font-medium shadow-sm transition"
+                  >
+                    <Plus className="w-4 h-4" /> Mark Event / Meeting Attendance
+                  </button>
+                </div>
               )}
             </div>
 
